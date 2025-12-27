@@ -66,93 +66,125 @@ class BackupService:
         Restores database from an Excel file.
         WARNING: This deletes all existing data!
         """
-        xls = pd.ExcelFile(io.BytesIO(file_content))
+        try:
+            xls = pd.ExcelFile(io.BytesIO(file_content))
+        except Exception as e:
+            raise ValueError(f"Invalid Excel file: {e}")
         
-        async with session_factory() as session:
-            # 1. Clear existing data (Order matters due to Foreign Keys!)
-            # Deleting children first
-            tables_to_clear = [
-                "user_rewards",
-                "referrals",
-                "point_history",
-                "user_survey_answers",
-                "users",
-                "channels", 
-                "rewards",
-                "webinar_settings",
-                "admins"
-            ]
-            
-            for table in tables_to_clear:
-                await session.execute(text(f"DELETE FROM {table}"))
-            
-            await session.commit()
-            
-            # 2. Import data (Order matters: Parents first)
-            # We map sheet names to Models
-            sheet_to_model = {
-                "users": User,
-                "channels": Channel,
-                "referrals": Referral,
-                "point_history": PointHistory,
-                "rewards": Reward,
-                "user_rewards": UserReward,
-                "user_survey_answers": UserSurveyAnswer,
-                "webinar_settings": WebinarSettings,
-                "admins": Admin
-            }
-            
-            # Order of import
-            import_order = [
-                "admins",
-                "channels",
-                "rewards",
-                "users",
-                "referrals",
-                "point_history",
-                "user_survey_answers",
-                "user_rewards",
-                "webinar_settings"
-            ]
-            
-            for sheet_name in import_order:
-                if sheet_name in xls.sheet_names and sheet_name in sheet_to_model:
-                    try:
-                        df = pd.read_excel(xls, sheet_name=sheet_name)
-                        
-                        if df.empty:
-                            continue
-                            
-                        data = df.to_dict(orient='records')
-                        model = sheet_to_model[sheet_name]
-                        
-                        # Clean data: Replace NaN with None, handle timestamps
-                        cleaned_data = []
-                        for row in data:
-                            clean_row = {}
-                            for k, v in row.items():
-                                if pd.isna(v):
-                                    clean_row[k] = None
-                                else:
-                                    clean_row[k] = v
-                                    
-                            # Check for fields that should be datetime
-                            # This is a bit manual, ideally we check model columns
-                            for col in clean_row:
-                                if "created_at" in col or "updated_at" in col or "webinar_datetime" in col:
-                                    if clean_row[col] and isinstance(clean_row[col], str):
-                                        try:
-                                            clean_row[col] = datetime.fromisoformat(clean_row[col])
-                                        except:
-                                            pass
-                                            
-                            cleaned_data.append(clean_row)
+        # Validation: Check if critical sheets exist
+        required_sheets = ["users", "channels"]
+        if not all(sheet in xls.sheet_names for sheet in required_sheets):
+            raise ValueError(f"Backup file is missing required sheets: {required_sheets}. Are you sure this is a Backup file?")
 
-                        if cleaned_data:
-                            await session.execute(text(f"INSERT INTO {sheet_name} ({', '.join(cleaned_data[0].keys())}) VALUES ({', '.join([':' + k for k in cleaned_data[0].keys()])})"), cleaned_data)
+        async with session_factory() as session:
+            try:
+                # 1. Clear existing data (Order matters due to Foreign Keys!)
+                # Deleting children first
+                tables_to_clear = [
+                    "user_rewards",
+                    "referrals",
+                    "point_history",
+                    "user_survey_answers",
+                    "users",
+                    "channels", 
+                    "rewards",
+                    "webinar_settings",
+                    "admins"
+                ]
+                
+                for table in tables_to_clear:
+                    await session.execute(text(f"DELETE FROM {table}"))
+                
+                # REMOVED commit here to ensure atomicity. If insert fails, delete rolls back.
+                
+                # 2. Import data (Order matters: Parents first)
+                sheet_to_model = {
+                    "users": User,
+                    "channels": Channel,
+                    "referrals": Referral,
+                    "point_history": PointHistory,
+                    "rewards": Reward,
+                    "user_rewards": UserReward,
+                    "user_survey_answers": UserSurveyAnswer,
+                    "webinar_settings": WebinarSettings,
+                    "admins": Admin
+                }
+                
+                import_order = [
+                    "admins",
+                    "channels",
+                    "rewards",
+                    "users",
+                    "referrals",
+                    "point_history",
+                    "user_survey_answers",
+                    "user_rewards",
+                    "webinar_settings"
+                ]
+                
+                # Fields that MUST be integers
+                int_fields = [
+                    "id", "telegram_id", "referrer_id", "referred_id", 
+                    "user_id", "reward_id", "balance", "amount", "cost"
+                ]
+
+                for sheet_name in import_order:
+                    if sheet_name in xls.sheet_names and sheet_name in sheet_to_model:
+                        try:
+                            df = pd.read_excel(xls, sheet_name=sheet_name)
                             
-                    except Exception as e:
-                        logger.error(f"Error restoring {sheet_name}: {e}")
-                        raise e
-            
-            await session.commit()
+                            if df.empty:
+                                continue
+                                
+                            data = df.to_dict(orient='records')
+                            
+                            # Clean data: Replace NaN with None, handle timestamps, force ints
+                            cleaned_data = []
+                            for row in data:
+                                clean_row = {}
+                                for k, v in row.items():
+                                    if pd.isna(v):
+                                        clean_row[k] = None
+                                    else:
+                                        # Force integer conversion for ID-like fields
+                                        if k in int_fields:
+                                            try:
+                                                clean_row[k] = int(float(v))
+                                            except:
+                                                clean_row[k] = v # Fallback if not convertible
+                                        else:
+                                            clean_row[k] = v
+                                        
+                                # Check for fields that should be datetime
+                                for col in clean_row:
+                                    if "created_at" in col or "updated_at" in col or "webinar_datetime" in col:
+                                        val = clean_row.get(col)
+                                        if val and isinstance(val, str):
+                                            try:
+                                                # Clean up common issues like "2023-12-25 10:00:60" or space trimming
+                                                val = val.strip()
+                                                clean_row[col] = datetime.fromisoformat(val)
+                                            except ValueError:
+                                                # If format is totally wrong or has 60 seconds, fallback to current time
+                                                # This prevents "second must be in 0..59" and "invalid datetime format" errors
+                                                logger.warning(f"Invalid timestamp found in {col}: {val}. Using current time.")
+                                                clean_row[col] = datetime.now()
+                                                
+                                cleaned_data.append(clean_row)
+
+                            if cleaned_data:
+                                await session.execute(
+                                    text(f"INSERT INTO {sheet_name} ({', '.join(cleaned_data[0].keys())}) VALUES ({', '.join([':' + k for k in cleaned_data[0].keys()])})"), 
+                                    cleaned_data
+                                )
+                                
+                        except Exception as e:
+                            logger.error(f"Error restoring {sheet_name}: {e}")
+                            raise e # Checkpoint: If any sheet fails, everything rolls back
+                
+                await session.commit()
+                
+            except Exception as e:
+                await session.rollback()
+                logger.error(f"Restore failed, rolled back: {e}")
+                raise e
