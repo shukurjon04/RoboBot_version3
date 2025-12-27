@@ -7,7 +7,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.enums import ParseMode
 
 from app.config.settings import settings
-from app.infrastructure.cache.factory import make_redis_storage
+# from app.infrastructure.cache.factory import make_redis_storage
 from app.presentation.middlewares.user import UserMiddleware
 from app.presentation.middlewares.status import CheckStatusMiddleware
 from app.presentation.handlers import registration, user, admin, profile
@@ -25,11 +25,8 @@ async def main():
     bot = Bot(token=settings.BOT_TOKEN.get_secret_value())
     
     # Initialize Storage
-    try:
-        storage = make_redis_storage()
-    except Exception:
-        logging.warning("Redis not available, falling back to MemoryStorage")
-        storage = MemoryStorage()
+    # Initialize Storage
+    storage = MemoryStorage()
 
     dp = Dispatcher(storage=storage)
 

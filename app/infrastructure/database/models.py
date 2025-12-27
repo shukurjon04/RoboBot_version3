@@ -14,8 +14,8 @@ class TimestampMixin:
 class User(Base, AsyncAttrs, TimestampMixin):
     __tablename__ = "users"
 
-    id: Mapped[int] = mapped_column(Integer, Identity(), unique=True)
-    telegram_id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=False)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    telegram_id: Mapped[int] = mapped_column(BigInteger, unique=True, autoincrement=False)
 
     username: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     first_name: Mapped[str] = mapped_column(String)

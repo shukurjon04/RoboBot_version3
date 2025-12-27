@@ -14,6 +14,10 @@ router = Router()
 @router.message(F.text == "👤 Profil")
 async def show_profile(message: Message, db_user, referral_repo: AbstractReferralRepository, state: FSMContext):
     await state.clear()
+
+    if not db_user:
+        await message.answer("Siz ro'yxatdan o'tmagansiz, avval /start buyrug'i bilan ro'yxatdan o'ting.")
+        return
     count = await referral_repo.get_referral_count(db_user.telegram_id)
     
     text = (

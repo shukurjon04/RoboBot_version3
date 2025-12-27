@@ -467,3 +467,60 @@ async def on_delete_channel(callback: CallbackQuery, session):
     
     channels = await repo.get_all()
     await callback.message.edit_reply_markup(reply_markup=channels_list_kb(channels))
+
+@router.message(F.text == "💾 Bazani yuklash")
+async def backup_db(message: Message):
+    if not is_admin(message.from_user.id):
+        return
+    
+    from app.use_cases.backup import BackupService
+    backup_service = BackupService()
+    
+    await message.answer("⏳ Baza yuklanmoqda, kuting...")
+    
+    try:
+        file_content = await backup_service.create_backup()
+        document = BufferedInputFile(file_content, filename=f"backup_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx")
+        await message.answer_document(document, caption="✅ Baza muvaffaqiyatli yuklandi!")
+    except Exception as e:
+        await message.answer(f"❌ Xatolik yuz berdi: {e}")
+
+@router.message(F.text == "♻️ Bazani tiklash")
+async def restore_db_ask(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return
+    
+    await state.set_state(AdminSG.wait_restore)
+    await message.answer(
+        "📂 <b>Bazani tiklash</b>\n\n"
+        "Excel faylni (.xlsx) yuboring. \n"
+        "⚠️ <b>DIQQAT:</b> Bu amal hozirgi bazadagi barcha ma'lumotlarni o'chirib yuboradi va yangi fayldagi ma'lumotlarni yozadi!",
+        parse_mode="HTML",
+        reply_markup=admin_back_kb()
+    )
+
+@router.message(AdminSG.wait_restore, F.document)
+async def process_restore_db(message: Message, state: FSMContext, bot):
+    if not is_admin(message.from_user.id):
+        return
+        
+    document = message.document
+    if not document.file_name.endswith('.xlsx'):
+        await message.answer("❌ Faqat .xlsx formatidagi Excel faylni yuboring!")
+        return
+    
+    await message.answer("⏳ Tiklash jarayoni boshlandi, kuting...")
+    
+    try:
+        file_io = await bot.download(document)
+        content = file_io.read()
+        
+        from app.use_cases.backup import BackupService
+        backup_service = BackupService()
+        await backup_service.restore_backup(content)
+        
+        await state.clear()
+        await message.answer("✅ Baza muvaffaqiyatli tiklandi!", reply_markup=admin_kb)
+    except Exception as e:
+        await message.answer(f"❌ Xatolik yuz berdi: {e}")
+

@@ -28,3 +28,4 @@ class AdminSG(StatesGroup):
     wait_channel_name = State()
     wait_channel_id = State()
     wait_channel_link = State()
+    wait_restore = State()

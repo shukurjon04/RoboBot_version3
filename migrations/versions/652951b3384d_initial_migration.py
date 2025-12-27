@@ -51,6 +51,7 @@ def upgrade() -> None:
     sa.PrimaryKeyConstraint('id')
     )
     op.create_table('users',
+    sa.Column('id', sa.Integer(), nullable=False),
     sa.Column('telegram_id', sa.BigInteger(), autoincrement=False, nullable=False),
     sa.Column('username', sa.String(), nullable=True),
     sa.Column('first_name', sa.String(), nullable=False),
@@ -60,7 +61,8 @@ def upgrade() -> None:
     sa.Column('created_at', sa.DateTime(), nullable=False),
     sa.Column('updated_at', sa.DateTime(), nullable=False),
     sa.ForeignKeyConstraint(['referrer_id'], ['users.telegram_id'], ),
-    sa.PrimaryKeyConstraint('telegram_id')
+    sa.PrimaryKeyConstraint('id'),
+    sa.UniqueConstraint('telegram_id')
     )
     op.create_table('point_history',
     sa.Column('id', sa.Integer(), nullable=False),

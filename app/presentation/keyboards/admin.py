@@ -13,6 +13,10 @@ admin_kb = ReplyKeyboardMarkup(
         [
             KeyboardButton(text="📢 Kanallarni boshqarish"),
             KeyboardButton(text="🏠 Asosiy menyu")
+        ],
+        [
+            KeyboardButton(text="💾 Bazani yuklash"),
+            KeyboardButton(text="♻️ Bazani tiklash")
         ]
     ],
     resize_keyboard=True

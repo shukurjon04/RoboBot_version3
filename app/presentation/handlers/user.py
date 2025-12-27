@@ -17,6 +17,11 @@ async def show_points_and_link(
     referral_repo: AbstractReferralRepository,
     bot
 ):
+    
+    if not db_user:
+        await message.answer("Siz ro'yxatdan o'tmagansiz, avval /start buyrug'i bilan ro'yxatdan o'ting.")
+        return
+
     bot_info = await bot.get_me()
     link = f"https://t.me/{bot_info.username}?start={db_user.telegram_id}"
     
@@ -57,6 +62,10 @@ async def show_my_points(
     referral_repo: AbstractReferralRepository
 ):
     # Get stats
+    if not db_user:
+        await message.answer("Siz ro'yxatdan o'tmagansiz, avval /start buyrug'i bilan ro'yxatdan o'ting.")
+        return
+
     count = await referral_repo.get_referral_count(db_user.telegram_id)
     points = db_user.balance
     
@@ -75,6 +84,11 @@ async def show_leaderboard(
     user_repo: AbstractUserRepository,
     db_user
 ):
+   
+    if not db_user:
+        await message.answer("Siz ro'yxatdan o'tmagansiz, avval /start buyrug'i bilan ro'yxatdan o'ting.")
+        return
+
     service = LeaderboardService(user_repo)
     top_users = await service.get_top_users(limit=50)
     user_rank = await service.get_user_rank(db_user.telegram_id)

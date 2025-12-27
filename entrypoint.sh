@@ -1,12 +1,9 @@
 #!/bin/bash
 set -e
 
-# Wait for database to be ready
-echo "Waiting for database..."
-while ! nc -z $DB_HOST 5432; do
-  sleep 1
-done
-echo "Database is ready!"
+# Run pre-start script
+echo "Run pre-start script..."
+python -m app.pre_start
 
 # Run migrations
 echo "Running migrations..."

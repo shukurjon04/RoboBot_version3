@@ -249,3 +249,14 @@ async def process_age_range(
     await callback.message.answer(text, parse_mode="HTML", reply_markup=main_menu_kb())
     
     await state.clear()
+
+@router.callback_query(F.data.startswith("region:"))
+@router.callback_query(F.data.startswith("study:"))
+@router.callback_query(F.data.startswith("age:"))
+async def session_expired(callback: CallbackQuery):
+    await callback.answer("⚠️ Sessiya vaqti tugagan yoki yangilangan. Iltimos, /start ni bosing.", show_alert=True)
+    try:
+        await callback.message.delete()
+    except Exception:
+        pass
+    await callback.message.answer("Bot yangilanganligi sababli ro'yxatdan o'tishni qaytadan boshlash kerak.\n\nIltimos, /start ni bosing.")

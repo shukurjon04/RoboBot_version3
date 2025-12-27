@@ -1,11 +1,12 @@
 aiogram>=3.0.0
 sqlalchemy>=2.0.0
 alembic
-asyncpg
+aiosqlite
 pydantic
 pydantic-settings
 python-dotenv
-redis
+Pillow
 Pillow
 APScheduler==3.10.4
 openpyxl
+pandas
