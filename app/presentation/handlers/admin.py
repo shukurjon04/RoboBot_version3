@@ -2,10 +2,13 @@
 import csv
 import io
 import logging
+import asyncio
 from datetime import datetime
+from typing import List
 from aiogram import Router, F
 from aiogram.filters import Command, CommandObject
 from aiogram.types import Message, BufferedInputFile, CallbackQuery
+from aiogram.exceptions import TelegramRetryAfter, TelegramForbiddenError
 from aiogram.fsm.context import FSMContext
 from sqlalchemy import select, update
 from openpyxl import Workbook
@@ -22,10 +25,17 @@ from app.presentation.states import AdminSG
 from app.infrastructure.telegram.checker import TelegramChannelChecker
 from app.use_cases.subscription import SubscriptionService
 from app.presentation.keyboards.registration import check_subscription_kb
+from app.presentation.keyboards.admin_webinar import (
+    webinar_years_kb, webinar_months_kb, webinar_days_kb, 
+    webinar_hours_kb, webinar_minutes_kb
+)
 
 logger = logging.getLogger(__name__)
 
 router = Router()
+
+# Limit concurrent broadcast sends to avoid flood limits (20 msgs/sec is safer)
+broadcast_semaphore = asyncio.Semaphore(20)
 
 def is_admin(user_id: int) -> bool:
     return user_id in settings.ADMIN_IDS
@@ -91,49 +101,76 @@ async def broadcast_button(message: Message, state: FSMContext):
     )
 
 @router.message(AdminSG.wait_broadcast)
-async def process_broadcast(message: Message, state: FSMContext, session, bot):
+async def process_broadcast(message: Message, state: FSMContext, session):
     if not is_admin(message.from_user.id):
         return
     
-    # Handle "Back" button click explicitly
     if message.text == "⬅️ Orqaga":
         await admin_back_to_main(message, state)
         return
 
-    logging.info(f"Starting broadcast for message from user {message.from_user.id}")
-        
     user_repo = SQLAlchemyUserRepository(session)
     users = await user_repo.get_all_users()
     
-    progress_msg = await message.answer("📤 Xabar yuborish boshlandi, biroz kuting...")
-    
-    count = 0
-    for user_obj in users:
-        try:
-            # We use copy_to to preserve formatting and media
-            await message.copy_to(user_obj.telegram_id)
-            count += 1
-        except Exception as e:
-            logging.error(f"Failed to send broadcast to {user_obj.telegram_id}: {e}")
-            pass
-            
-    await state.clear()
-    
-    # Success message based on the user screenshot
-    success_text = f"✅ Xabar {count} ta foydalanuvchiga yuborildi."
-    await message.answer(success_text)
-    
-    # Return to Admin Menu
-    admin_menu_text = (
-        "👨‍💻 <b>Admin Panel</b>\n\n"
-        "Quyidagi bo'limlardan birini tanlang:"
+    await message.answer(
+        "📤 <b>Rassilka boshlandi!</b>\n\n"
+        f"Xabar {len(users)} ta foydalanuvchiga yuboriladi. "
+        "Jarayon yakunlangach sizga hisobot beraman.",
+        parse_mode="HTML"
     )
-    await message.answer(admin_menu_text, parse_mode="HTML", reply_markup=admin_kb)
+    
+    # Run broadcast in background
+    asyncio.create_task(_run_manual_broadcast(message, users, message.from_user.id))
+    
+    await state.clear()
+    await message.answer("Boshqa amallar uchun menyudan foydalanishingiz mumkin:", reply_markup=admin_kb)
+
+async def _run_manual_broadcast(message_to_copy: Message, users: List[User], admin_id: int):
+    """Background task to perform parallel broadcast"""
+    sent_count = 0
+    blocked_count = 0
+    error_count = 0
+    admin_ids = set(settings.ADMIN_IDS)
+    
+    async def send_to_user(user: User):
+        nonlocal sent_count, blocked_count, error_count
+        if user.telegram_id in admin_ids:
+            return
+
+        async with broadcast_semaphore:
+            try:
+                # We use copy_to to preserve media and formatting
+                await message_to_copy.copy_to(chat_id=user.telegram_id)
+                sent_count += 1
+            except TelegramForbiddenError:
+                blocked_count += 1
+            except TelegramRetryAfter as e:
+                await asyncio.sleep(e.retry_after)
+                try:
+                    await message_to_copy.copy_to(chat_id=user.telegram_id)
+                    sent_count += 1
+                except Exception:
+                    error_count += 1
+            except Exception:
+                error_count += 1
+
+    logger.info(f"Admin {admin_id} started manual broadcast to {len(users)} users")
+    tasks = [send_to_user(user) for user in users]
+    await asyncio.gather(*tasks)
+    
+    logger.info(f"Manual broadcast finished. Success: {sent_count}, Blocked: {blocked_count}, Errors: {error_count}")
     
     try:
-        await progress_msg.delete()
-    except:
-        pass
+        report = (
+            "✅ <b>Rassilka yakunlandi!</b>\n\n"
+            f"👤 Jami: {len(users)}\n"
+            f"✅ Yuborildi: {sent_count}\n"
+            f"🚫 Bloklagan: {blocked_count}\n"
+            f"❌ Xatoliklar: {error_count}"
+        )
+        await message_to_copy.bot.send_message(admin_id, report, parse_mode="HTML")
+    except Exception as e:
+        logger.error(f"Failed to send broadcast report to admin {admin_id}: {e}")
 
 @router.message(F.text == "📊 Reyting Excel")
 async def export_excel(message: Message, session):
@@ -239,41 +276,118 @@ async def set_webinar_time_button(message: Message, state: FSMContext):
     if not is_admin(message.from_user.id):
         return
     
-    await state.set_state(AdminSG.wait_webinar_time)
+    await state.set_state(AdminSG.wait_webinar_year)
     await message.answer(
-        "📅 <b>Vebinar vaqtini kiriting</b>\n\n"
-        "Format: YYYY-MM-DD HH:MM\n"
-        "Masalan: 2025-12-30 19:00",
+        "📅 <b>Vebinar yilini tanlang:</b>",
+        parse_mode="HTML",
+        reply_markup=webinar_years_kb()
+    )
+
+@router.callback_query(AdminSG.wait_webinar_year, F.data.startswith("wb_year:"))
+async def process_webinar_year_cb(callback: CallbackQuery, state: FSMContext):
+    year = callback.data.split(":")[1]
+    await state.update_data(wb_year=int(year))
+    await state.set_state(AdminSG.wait_webinar_month)
+    await callback.message.edit_text(
+        "📅 <b>Vebinar oyini tanlang:</b>",
+        parse_mode="HTML",
+        reply_markup=webinar_months_kb()
+    )
+
+@router.callback_query(AdminSG.wait_webinar_month, F.data.startswith("wb_month:"))
+async def process_webinar_month_cb(callback: CallbackQuery, state: FSMContext):
+    month = callback.data.split(":")[1]
+    await state.update_data(wb_month=int(month))
+    data = await state.get_data()
+    year = data['wb_year']
+    
+    await state.set_state(AdminSG.wait_webinar_day)
+    await callback.message.edit_text(
+        "📅 <b>Vebinar kunini tanlang:</b>",
+        parse_mode="HTML",
+        reply_markup=webinar_days_kb(year, int(month))
+    )
+
+@router.callback_query(AdminSG.wait_webinar_day, F.data.startswith("wb_day:"))
+async def process_webinar_day_cb(callback: CallbackQuery, state: FSMContext):
+    day = callback.data.split(":")[1]
+    await state.update_data(wb_day=int(day))
+    
+    await state.set_state(AdminSG.wait_webinar_hour)
+    await callback.message.edit_text(
+        "🕐 <b>Vebinar soatini tanlang:</b>",
+        parse_mode="HTML",
+        reply_markup=webinar_hours_kb()
+    )
+
+@router.callback_query(AdminSG.wait_webinar_hour, F.data.startswith("wb_hour:"))
+async def process_webinar_hour_cb(callback: CallbackQuery, state: FSMContext):
+    hour = callback.data.split(":")[1]
+    await state.update_data(wb_hour=int(hour))
+    
+    await state.set_state(AdminSG.wait_webinar_minute)
+    await callback.message.edit_text(
+        "🕐 <b>Vebinar daqiqasini tanlang:</b>",
+        parse_mode="HTML",
+        reply_markup=webinar_minutes_kb(hour)
+    )
+
+@router.callback_query(AdminSG.wait_webinar_minute, F.data.startswith("wb_minute:"))
+async def process_webinar_minute_cb(callback: CallbackQuery, state: FSMContext):
+    minute = callback.data.split(":")[1]
+    await state.update_data(wb_minute=int(minute))
+    
+    data = await state.get_data()
+    year = data['wb_year']
+    month = data['wb_month']
+    day = data['wb_day']
+    hour = data['wb_hour']
+    
+    webinar_dt = datetime(year, month, day, hour, int(minute))
+    await state.update_data(webinar_dt=webinar_dt.isoformat())
+    
+    await state.set_state(AdminSG.wait_webinar_link)
+    await callback.message.delete()
+    await callback.message.answer(
+        f"✅ <b>Vaqt belgilandi:</b> {format_uzb_time(webinar_dt)}\n\n"
+        "Endi vebinar o'tkaziladigan kanal yoki guruh nomini (yoki havolasini) yuboring:",
         parse_mode="HTML",
         reply_markup=admin_back_kb()
     )
 
-@router.message(AdminSG.wait_webinar_time)
-async def process_webinar_time(message: Message, state: FSMContext, session):
-    if not is_admin(message.from_user.id):
-        return
-    
-    if message.text == "⬅️ Orqaga":
-        await admin_back_to_main(message, state)
-        return
-        
-    try:
-        webinar_dt = datetime.strptime(message.text.strip(), "%Y-%m-%d %H:%M")
-        await state.update_data(webinar_dt=webinar_dt.isoformat())
-        await state.set_state(AdminSG.wait_webinar_link)
-        await message.answer(
-            f"✅ <b>Vaqt qabul qilindi:</b> {format_uzb_time(webinar_dt)}\n\n"
-            f"Endi vebinar o'tkaziladigan kanal havolasini (link) yuboring:",
-            parse_mode="HTML",
-            reply_markup=admin_back_kb()
-        )
-    except ValueError:
-        await message.answer(
-            "❌ Noto'g'ri format!\n\n"
-            "To'g'ri format: YYYY-MM-DD HH:MM\n"
-            "Misol: 2025-12-26 18:00",
-            reply_markup=admin_back_kb()
-        )
+@router.callback_query(F.data == "wb_back_to_admin")
+async def wb_back_to_admin_cb(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await callback.message.delete()
+    text = (
+        "👨‍💻 <b>Admin Panel</b>\n\n"
+        "Quyidagi bo'limlardan birini tanlang:"
+    )
+    await callback.message.answer(text, parse_mode="HTML", reply_markup=admin_kb)
+
+# Callback Back Handlers
+@router.callback_query(F.data == "wb_back_to_year")
+async def wb_back_to_year(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(AdminSG.wait_webinar_year)
+    await callback.message.edit_text("📅 <b>Vebinar yilini tanlang:</b>", parse_mode="HTML", reply_markup=webinar_years_kb())
+
+@router.callback_query(F.data == "wb_back_to_month")
+async def wb_back_to_month(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(AdminSG.wait_webinar_month)
+    await callback.message.edit_text("📅 <b>Vebinar oyini tanlang:</b>", parse_mode="HTML", reply_markup=webinar_months_kb())
+
+@router.callback_query(F.data == "wb_back_to_day")
+async def wb_back_to_day(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    year = data['wb_year']
+    month = data['wb_month']
+    await state.set_state(AdminSG.wait_webinar_day)
+    await callback.message.edit_text("📅 <b>Vebinar kunini tanlang:</b>", parse_mode="HTML", reply_markup=webinar_days_kb(year, month))
+
+@router.callback_query(F.data == "wb_back_to_hour")
+async def wb_back_to_hour(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(AdminSG.wait_webinar_hour)
+    await callback.message.edit_text("🕐 <b>Vebinar soatini tanlang:</b>", parse_mode="HTML", reply_markup=webinar_hours_kb())
 
 @router.message(AdminSG.wait_webinar_link)
 async def process_webinar_link(message: Message, state: FSMContext, session):
@@ -281,12 +395,20 @@ async def process_webinar_link(message: Message, state: FSMContext, session):
         return
         
     if message.text == "⬅️ Orqaga":
-        await state.set_state(AdminSG.wait_webinar_time)
-        await message.answer("Vebinar vaqtini kiriting (YYYY-MM-DD HH:MM):", reply_markup=admin_back_kb())
+        data = await state.get_data()
+        hour = str(data.get('wb_hour', '00')).zfill(2)
+        await state.set_state(AdminSG.wait_webinar_minute)
+        await message.answer("🕐 <b>Vebinar daqiqasini tanlang:</b>", parse_mode="HTML", reply_markup=webinar_minutes_kb(hour))
         return
 
     data = await state.get_data()
-    webinar_dt = datetime.fromisoformat(data['webinar_dt'])
+    webinar_dt_iso = data.get('webinar_dt')
+    if not webinar_dt_iso:
+        await message.answer("Xatolik yuz berdi. Iltimos jarayonni qaytadan boshlang.")
+        await state.clear()
+        return
+        
+    webinar_dt = datetime.fromisoformat(webinar_dt_iso)
     webinar_link = message.text.strip()
     
     webinar = WebinarSettings(
@@ -306,7 +428,7 @@ async def process_webinar_link(message: Message, state: FSMContext, session):
         f"✅ <b>Vebinar muvaffaqiyatli rejalashtirildi!</b>\n\n"
         f"📅 {webinar_dt.strftime('%Y-%m-%d')}\n"
         f"🕐 {format_uzb_time(webinar_dt)}\n"
-        f"🔗 Havola: {webinar_link}\n\n"
+        f"🔗 Joylashuv: {webinar_link}\n\n"
         f"Eslatmalar quyidagi vaqtlarda yuboriladi:\n"
         f"• 1 soat oldin\n"
         f"• 30 daqiqa oldin\n"
@@ -426,9 +548,12 @@ async def process_channel_link(message: Message, state: FSMContext, session, bot
     )
     
     count = 0
+    admin_ids = set(settings.ADMIN_IDS)
     logger.info(f"Starting targeted broadcast for new channel '{name}'...")
+    
     for u in users:
-        if u.telegram_id in settings.ADMIN_IDS:
+        # Strictly exclude admins
+        if u.telegram_id in admin_ids:
             continue
             
         # Check if user needs to subscribe to anything

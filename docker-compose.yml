@@ -2,11 +2,28 @@ services:
   app:
     build: .
     container_name: botrobo_app
-    restart: always
+    restart: unless-stopped
     volumes:
       - .:/app
       - ./data:/app/data
+      - ./logs:/app/logs
     env_file:
       - .env
     environment:
       - PYTHONPATH=/app
+      - TZ=Asia/Tashkent
+    healthcheck:
+      test: ["CMD", "python", "healthcheck.py"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    # Optional: Resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 128M

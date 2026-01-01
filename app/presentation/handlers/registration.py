@@ -57,7 +57,7 @@ async def cmd_start(
     if is_subbed:
         # User is already subscribed to all channels, skip to Name
         await state.set_state(RegistrationSG.wait_name)
-        await message.answer("Assalomu Alaykum! \nSizni tanlov ishtirokchilari ro‘yxatiga sharaf bilan kiritishimiz uchun ism-sharifingizni yozib yuboring. \nBu ism kelgusida sertifikatlaringizda ham aks etadi. ✨")
+        await message.answer(text=("<b>Assalomu Alaykum!</b>\n\nIsm-sharifingizni yuboring. \nBu ism kelgusida sertifikatlaringizda ham aks etadi. ✨"), parse_mode="HTML")
         return
 
     await state.set_state(RegistrationSG.wait_channel)
@@ -99,7 +99,7 @@ async def on_check_subscription(
             # Move to Name step
             await state.set_state(RegistrationSG.wait_name)
             await callback.message.delete()
-            await callback.message.answer("A'zolik tasdiqlandi ✅\n\nSizni tanlov ishtirokchilari ro‘yxatiga sharaf bilan kiritishimiz uchun ism-sharifingizni yozib yuboring. \nBu ism kelgusida sertifikatlaringizda ham aks etadi. ✨")
+            await callback.message.answer(text=("<b>Rahmat!\nEndi Roʻyxatdan oʻtishni boshlaymiz!</b> ✅\n\nIsm-sharifingizni yuboring. \nBu ism kelgusida sertifikatlaringizda ham aks etadi. ✨"), parse_mode="HTML")
         elif db_user:
             # Active user triggered by middleware
             await callback.message.delete()
@@ -130,7 +130,7 @@ async def process_name(message: Message, state: FSMContext):
     await state.update_data(full_name=message.text)
     await state.set_state(RegistrationSG.wait_phone)
     text = (
-        "Rahmat! Endi siz bilan bog'lanishimiz va yutuqlaringizni rasmiylashtirishimiz uchun "
+        "Rahmat! Endi siz bilan bog'lanishimiz uchun "
         "telefon raqamingizni pastdagi tugma orqali yuboring. 📱\n\n"
         "<i>Eslatma: Faqat \"Kontaktni yuborish\" tugmasini bosishingiz kifoya.</i>"
     )
@@ -160,11 +160,11 @@ async def process_phone(message: Message, state: FSMContext, user_repo: Abstract
     )
     await message.answer(text, reply_markup=regions_kb())
 
+
 # Fallback for phone if user sends text instad of contact (optional validation)
 @router.message(RegistrationSG.wait_phone)
 async def process_phone_invalid(message: Message):
     await message.answer("Iltimos, pastdagi tugmani bosib telefon raqamingizni yuboring.", reply_markup=phone_kb())
-
 
 @router.callback_query(RegistrationSG.wait_region, F.data.startswith("region:"))
 async def process_region(
@@ -259,13 +259,4 @@ async def process_age_range(
     
     await state.clear()
 
-@router.callback_query(F.data.startswith("region:"))
-@router.callback_query(F.data.startswith("study:"))
-@router.callback_query(F.data.startswith("age:"))
-async def session_expired(callback: CallbackQuery):
-    await callback.answer("⚠️ Sessiya vaqti tugagan yoki yangilangan. Iltimos, /start ni bosing.", show_alert=True)
-    try:
-        await callback.message.delete()
-    except Exception:
-        pass
-    await callback.message.answer("Bot yangilanganligi sababli ro'yxatdan o'tishni qaytadan boshlash kerak.\n\nIltimos, /start ni bosing.")
+

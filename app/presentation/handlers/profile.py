@@ -1,3 +1,4 @@
+import re
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery, ReplyKeyboardRemove, ReplyKeyboardMarkup, KeyboardButton
 from aiogram.fsm.context import FSMContext
@@ -98,20 +99,62 @@ async def update_name(message: Message, state: FSMContext, user_repo: AbstractUs
     await state.clear()
 
 @router.message(ProfileSG.edit_phone, F.contact)
-@router.message(ProfileSG.edit_phone, F.text.regexp(r"^\+998\d{9}$"))
-async def update_phone(message: Message, state: FSMContext, user_repo: AbstractUserRepository):
-    phone = message.contact.phone_number if message.contact else message.text
+async def update_phone_contact(message: Message, state: FSMContext, user_repo: AbstractUserRepository):
+    phone = message.contact.phone_number
     await user_repo.update_profile(message.from_user.id, phone_number=phone)
     await message.answer("Telefon raqami yangilandi!", reply_markup=main_menu_kb())
     await state.clear()
 
+@router.message(ProfileSG.edit_phone, F.text)
+async def update_phone_text(message: Message, state: FSMContext, user_repo: AbstractUserRepository):
+    phone = message.text
+    if phone == "⬅️ Bekor qilish":
+        return await cancel_edit(message, state, None, None) # Placeholder or direct call
+        
+    pattern = r"^(\+998|998)\d{9}$"
+    if re.match(pattern, phone):
+        if not phone.startswith("+"):
+            phone = "+" + phone
+        await user_repo.update_profile(message.from_user.id, phone_number=phone)
+        await message.answer("Telefon raqami yangilandi!", reply_markup=main_menu_kb())
+        await state.clear()
+    else:
+        await message.answer(
+            "❌ <b>Noto'g'ri format!</b>\n\n"
+            "Telefon raqamingizni quyidagi formatda yuboring:\n"
+            "<i>Masalan: +998901234567</i>\n\n"
+            "Yoki pastdagi <b>\"📱 Kontaktni yuborish\"</b> tugmasini bosing.",
+            parse_mode="HTML"
+        )
+
 @router.message(ProfileSG.edit_phone_2, F.contact)
-@router.message(ProfileSG.edit_phone_2, F.text.regexp(r"^\+998\d{9}$"))
-async def update_phone_2(message: Message, state: FSMContext, user_repo: AbstractUserRepository):
-    phone = message.contact.phone_number if message.contact else message.text
+async def update_phone_2_contact(message: Message, state: FSMContext, user_repo: AbstractUserRepository):
+    phone = message.contact.phone_number
     await user_repo.update_profile(message.from_user.id, phone_number_2=phone)
     await message.answer("Ikkinchi telefon raqami saqlandi!", reply_markup=main_menu_kb())
     await state.clear()
+
+@router.message(ProfileSG.edit_phone_2, F.text)
+async def update_phone_2_text(message: Message, state: FSMContext, user_repo: AbstractUserRepository):
+    phone = message.text
+    if phone == "⬅️ Bekor qilish":
+        return await cancel_edit(message, state, None, None)
+
+    pattern = r"^(\+998|998)\d{9}$"
+    if re.match(pattern, phone):
+        if not phone.startswith("+"):
+            phone = "+" + phone
+        await user_repo.update_profile(message.from_user.id, phone_number_2=phone)
+        await message.answer("Ikkinchi telefon raqami saqlandi!", reply_markup=main_menu_kb())
+        await state.clear()
+    else:
+        await message.answer(
+            "❌ <b>Noto'g'ri format!</b>\n\n"
+            "Telefon raqamingizni quyidagi formatda yuboring:\n"
+            "<i>Masalan: +998901234567</i>\n\n"
+            "Yoki pastdagi <b>\"📱 Kontaktni yuborish\"</b> tugmasini bosing.",
+            parse_mode="HTML"
+        )
 
 @router.callback_query(F.data.startswith("phone_opt:"))
 async def on_phone_option(callback: CallbackQuery, state: FSMContext):

@@ -23,7 +23,11 @@ class ProfileSG(StatesGroup):
 
 class AdminSG(StatesGroup):
     wait_broadcast = State()
-    wait_webinar_time = State()
+    wait_webinar_year = State()
+    wait_webinar_month = State()
+    wait_webinar_day = State()
+    wait_webinar_hour = State()
+    wait_webinar_minute = State()
     wait_webinar_link = State()
     wait_channel_name = State()
     wait_channel_id = State()

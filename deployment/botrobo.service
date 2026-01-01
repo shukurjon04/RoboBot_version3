@@ -1,0 +1,30 @@
+[Unit]
+Description=RoboTelegram Bot Service
+After=network.target
+
+[Service]
+Type=simple
+User=shukurjon
+WorkingDirectory=/home/shukurjon/projects/botrobo
+Environment="PYTHONPATH=/home/shukurjon/projects/botrobo"
+EnvironmentFile=/home/shukurjon/projects/botrobo/.env
+
+# Use virtual environment if exists
+ExecStart=/home/shukurjon/projects/botrobo/venv/bin/python /home/shukurjon/projects/botrobo/main.py
+
+# Restart policy
+Restart=always
+RestartSec=10
+StartLimitInterval=200
+StartLimitBurst=5
+
+# Logging
+StandardOutput=append:/home/shukurjon/projects/botrobo/logs/systemd.log
+StandardError=append:/home/shukurjon/projects/botrobo/logs/systemd_error.log
+
+# Security
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

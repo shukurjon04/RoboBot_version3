@@ -1,27 +1,32 @@
+import asyncio
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 import logging
 
 from app.domain.repositories import AbstractUserRepository
-from app.infrastructure.database.models import WebinarSettings
+from app.infrastructure.database.models import WebinarSettings, User
 from app.utils.formatters import format_uzb_time
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from aiogram import Bot
+from aiogram.exceptions import TelegramRetryAfter, TelegramForbiddenError
+from app.config.settings import settings
+from app.infrastructure.repositories.sqlalchemy import SQLAlchemyUserRepository
 
 logger = logging.getLogger(__name__)
 
 class WebinarSchedulerService:
-    def __init__(self, session_factory, bot: Bot, user_repo: AbstractUserRepository):
+    def __init__(self, session_factory, bot: Bot):
         self.session_factory = session_factory
         self.bot = bot
-        self.user_repo = user_repo
         self.scheduler = AsyncIOScheduler()
+        # Limit concurrent sends to avoid flood limits (20 msgs/sec is safer)
+        self.semaphore = asyncio.Semaphore(20)
         
     async def check_and_send_reminder(self):
-        """Check if webinar is approaching and send appropriate reminders"""
+        """Check if webinar is approaching and trigger reminders"""
         try:
             async with self.session_factory() as session:
                 # Get the latest webinar settings
@@ -33,8 +38,13 @@ class WebinarSchedulerService:
                     return
                     
                 now = datetime.now()
+                # TZ is set to Asia/Tashkent in Docker, so datetime.now() is already correct
+                
                 # Time until webinar in minutes
                 time_until = (webinar.webinar_datetime - now).total_seconds() / 60
+                
+                # Log timing for debugging (only at DEBUG level to avoid log bloat)
+                logger.debug(f"Webinar check: now={now}, webinar={webinar.webinar_datetime}, until={time_until:.1f}m")
                 
                 reminders = [
                     {"threshold": 60, "flag": "sent_1h", "msg": "Vebinar 1 soatdan keyin boshlanadi! ⏰"},
@@ -57,43 +67,74 @@ class WebinarSchedulerService:
                         break
 
                 if target_reminder:
-                    logger.info(f"Checking {target_reminder['flag']} for webinar at {webinar.webinar_datetime}")
+                    logger.info(f"Triggering {target_reminder['flag']} for webinar at {webinar.webinar_datetime}")
                     
-                    users = await self.user_repo.get_all_users()
+                    user_repo = SQLAlchemyUserRepository(session)
+                    users = await user_repo.get_all_users()
                     
-                    # Format the webinar time for the message
-                    webinar_time_str = format_uzb_time(webinar.webinar_datetime)
-                    
-                    message = (
-                        "🎁 <b>Siz yutishga tayyormisiz?</b>\n\n"
-                        f"{target_reminder['msg']}\n"
-                        f"⏰ Vebinar boshlanish vaqti: <b>{webinar_time_str}</b>\n\n"
-                        "Reyting g'oliblarini aniqlaymiz! 🏆\n\n"
-                        f"👉 <b>Vebinarga qo'shilish:</b> {webinar.webinar_link}\n\n"
-                        "Tayyor turing!"
-                    )
-                    
-                    sent_count = 0
-                    logger.info(f"Starting broadcast for {target_reminder['flag']} to {len(users)} users...")
-                    for user in users:
-                        try:
-                            await self.bot.send_message(
-                                chat_id=user.telegram_id,
-                                text=message,
-                                parse_mode="HTML"
-                            )
-                            sent_count += 1
-                        except Exception as e:
-                            # Log individual failures but continue the broadcast
-                            pass
-                    
-                    # Mark this specific reminder as sent
+                    # Mark this specific reminder as sent IMMEDIATELY to prevent double triggering
                     setattr(webinar, target_reminder["flag"], True)
                     await session.commit()
-                    logger.info(f"Successfully sent {target_reminder['flag']} to {sent_count}/{len(users)} users")
+                    
+                    # Run broadcast in background so it doesn't block the scheduler
+                    asyncio.create_task(self._run_broadcast(users, target_reminder, webinar))
                     
         except Exception as e:
             logger.error(f"Error in check_and_send_reminder: {e}", exc_info=True)
+
+    async def _run_broadcast(self, users: List[User], reminder: dict, webinar: WebinarSettings):
+        """Perform non-blocking broadcast with rate limiting"""
+        sent_count = 0
+        blocked_count = 0
+        error_count = 0
+        admin_ids = set(settings.ADMIN_IDS)
+        
+        webinar_time_str = format_uzb_time(webinar.webinar_datetime)
+        message = (
+            "🎁 <b>Siz yutishga tayyormisiz?</b>\n\n"
+            # f"{reminder['msg']}\n"
+            f"⏰ Vebinar boshlanish vaqti: <b>{webinar_time_str}</b>\n\n"
+            "Reyting g'oliblarini aniqlaymiz! 🏆\n\n"
+            f"👉 <b>Vebinarga qo'shilish:</b> {webinar.webinar_link}\n\n"
+            "Tayyor turing!"
+        )
+
+        async def send_to_user(user: User):
+            nonlocal sent_count, blocked_count, error_count
+            if user.telegram_id in admin_ids:
+                return
+
+            async with self.semaphore:
+                try:
+                    await self.bot.send_message(
+                        chat_id=user.telegram_id,
+                        text=message,
+                        parse_mode="HTML"
+                    )
+                    sent_count += 1
+                except TelegramForbiddenError:
+                    blocked_count += 1
+                except TelegramRetryAfter as e:
+                    logger.warning(f"Rate limited! Sleeping for {e.retry_after}s")
+                    await asyncio.sleep(e.retry_after)
+                    # Retry once
+                    try:
+                        await self.bot.send_message(chat_id=user.telegram_id, text=message, parse_mode="HTML")
+                        sent_count += 1
+                    except Exception:
+                        error_count += 1
+                except Exception as e:
+                    error_count += 1
+                    logger.debug(f"Failed to send to {user.telegram_id}: {e}")
+
+        logger.info(f"Starting broadcast tasks for {reminder['flag']} to {len(users)} users...")
+        tasks = [send_to_user(user) for user in users]
+        await asyncio.gather(*tasks)
+        
+        logger.info(
+            f"Finish {reminder['flag']} broadcast: "
+            f"Sent: {sent_count}, Blocked: {blocked_count}, Errors: {error_count}"
+        )
     
     def start(self):
         """Start the scheduler with 1-minute interval checks"""
@@ -107,7 +148,7 @@ class WebinarSchedulerService:
             replace_existing=True
         )
         self.scheduler.start()
-        logger.info("Webinar scheduler started (checking every 10 minutes)")
+        logger.info("Webinar scheduler started (checking every 1 minute)")
     
     def shutdown(self):
         """Shutdown the scheduler"""
