@@ -1,4 +1,3 @@
-
 from aiogram import Router, F
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
 from urllib.parse import quote
@@ -8,6 +7,15 @@ from app.use_cases.leaderboard import LeaderboardService
 from app.config.settings import settings
 
 router = Router()
+
+from textwrap import dedent
+from sqlalchemy import select
+from aiogram.types import CallbackQuery
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+from app.domain.enums import UserStatus
+from app.infrastructure.database.models import User, WebinarCheckin
+from app.infrastructure.repositories.sqlalchemy import SQLAlchemyUserRepository
 
 @router.message(F.text == "➕ Ball yig‘ish")
 async def show_points_and_link(
@@ -167,3 +175,5 @@ async def show_contact(message: Message):
         "📞 Dasturchi: @Bilmadm_0\n"
     )
     await message.answer(text, parse_mode="HTML")
+
+

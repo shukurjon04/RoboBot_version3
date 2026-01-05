@@ -12,6 +12,10 @@ admin_kb = ReplyKeyboardMarkup(
         ],
         [
             KeyboardButton(text="📢 Kanallarni boshqarish"),
+            KeyboardButton(text="✅ Check-in")
+        ],
+        [
+            KeyboardButton(text="📥 Vebinar qatnashchilari"),
             KeyboardButton(text="🏠 Asosiy menyu")
         ],
         [
@@ -26,4 +30,20 @@ def admin_back_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[[KeyboardButton(text="⬅️ Orqaga")]],
         resize_keyboard=True
+    )
+
+def suspicious_users_kb():
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="✉️ Barchasiga xabar yuborish", callback_data="send_to_suspicious")]
+        ]
+    )
+
+def checkin_button_kb(bot_username: str):
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Men shu yerdaman", url=f"https://t.me/{bot_username}?start=checkin")]
+        ]
     )

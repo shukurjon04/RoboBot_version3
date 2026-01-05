@@ -33,3 +33,8 @@ class AdminSG(StatesGroup):
     wait_channel_id = State()
     wait_channel_link = State()
     wait_restore = State()
+    wait_send_message_id = State()
+    wait_send_message_content = State()
+    wait_suspicious_broadcast_content = State()
+    wait_checkin_text = State()
+    wait_checkin_channel = State()

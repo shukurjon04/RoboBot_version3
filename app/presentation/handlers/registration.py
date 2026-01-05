@@ -1,8 +1,10 @@
 
 from aiogram import Router, F
+import logging
 from aiogram.types import Message, CallbackQuery, FSInputFile, ReplyKeyboardRemove
 from aiogram.filters import CommandStart, CommandObject
 from aiogram.fsm.context import FSMContext
+from sqlalchemy import select
 
 from app.domain.repositories import AbstractUserRepository, AbstractReferralRepository
 from app.use_cases.registration import RegistrationService
@@ -13,6 +15,7 @@ from app.presentation.keyboards.main import main_menu_kb
 from app.domain.enums import UserStatus, StudyStatus, AgeRange
 from app.infrastructure.repositories.sqlalchemy import SQLAlchemyChannelRepository
 from app.infrastructure.telegram.checker import TelegramChannelChecker
+from app.infrastructure.database.models import User, WebinarCheckin
 
 router = Router()
 
@@ -36,6 +39,43 @@ async def cmd_start(
     referrer = None
     if command.args and command.args.isdigit():
         referrer = int(command.args)
+
+    # Checkin Deep Link
+    if command.args == "checkin":
+        try:
+            # 1. Register or update user info (always ensure fresh info)
+            user = await reg_service.register_user(message.from_user.id, message.from_user.first_name, message.from_user.username, None)
+            
+            # 2. Check if user is ACTIVE (Full registration)
+            if user.status == UserStatus.ACTIVE and user.phone_number:
+                # Check duplicate
+                stmt = select(WebinarCheckin).where(WebinarCheckin.user_id == message.from_user.id)
+                result = await session.execute(stmt)
+                existing_checkin = result.scalars().first()
+                
+                if existing_checkin:
+                    await message.answer("ℹ️ <b>Siz allaqachon ro'yxatdasiz!</b>\n\nTakroriy ro'yxatdan o'tish shart emas.", parse_mode="HTML")
+                    return
+
+                # Log attendance
+                checkin = WebinarCheckin(user_id=message.from_user.id)
+                session.add(checkin)
+                await session.commit()
+                
+                await message.answer("✅ <b>Rahmat!</b>\n\nSiz vebinar qatnashchisi sifatida muvaffaqiyatli ro'yxatga olindingiz! 🎉", parse_mode="HTML")
+                return
+            else:
+                # User is NEW or Incomplete -> Redirect to Registration Flow (fall through)
+                await state.update_data(is_checkin=True)
+                await message.answer("👋 <b>Assalomu alaykum!</b>\n\nVebinarda qatnashish uchun avval ro'yxatdan o'tishingiz kerak.", parse_mode="HTML")
+                # We do NOT return here, so it continues to the registration logic below
+        except Exception as e:
+            await session.rollback()
+            logging.error(f"Checkin error: {e}", exc_info=True)
+            await message.answer(f"❌ Xatolik yuz berdi: {e}")
+            return
+
+    # Register or get user
 
     # Register or get user
     # Note: If user exists, register_user just returns it. 
@@ -243,7 +283,30 @@ async def process_age_range(
     except Exception:
         pass
     
-    # Send Success Message
+    # Check if this registration was triggered by Check-in
+    is_checkin = data.get("is_checkin")
+    if is_checkin:
+        from app.infrastructure.database.models import WebinarCheckin
+        try:
+            # Check duplicate first (though unlikely for new user)
+            stmt = select(WebinarCheckin).where(WebinarCheckin.user_id == db_user.telegram_id)
+            result = await user_repo.session.execute(stmt)
+            existing = result.scalars().first()
+            
+            if not existing:
+                checkin = WebinarCheckin(user_id=db_user.telegram_id)
+                user_repo.session.add(checkin)
+                await user_repo.session.commit()
+                
+            await callback.message.answer("✅ <b>Siz muvaffaqiyatli qo'shildingiz!</b>", parse_mode="HTML", reply_markup=main_menu_kb())
+        except Exception as e:
+            logging.error(f"Failed to auto-checkin new user: {e}")
+            await callback.message.answer("✅ <b>Siz muvaffaqiyatli ro'yxatdan o'tdingiz!</b>", parse_mode="HTML", reply_markup=main_menu_kb())
+            
+        await state.clear()
+        return
+
+    # Send Success Message (Standard Registration)
     text = (
         f"🎉 <b>Tabriklaymiz, {full_name}!</b>\n\n"
         "Siz \"ZAMONAVIY USTOZ — 2025\" loyihasida ishtirok etish uchun muvaffaqiyatli ro‘yxatdan o‘tdingiz!\n\n"
@@ -255,8 +318,8 @@ async def process_age_range(
         "🔗 Pastdagi \"+Ball yig‘ish\" tugmasini bosing, maxsus e’lonni hamkasblaringizga ulashing va g‘oliblik sari qadam tashlang!\n\n"
         "Fursatni boy bermang, sovg‘alar sizni kutmoqda! 😊\n\n"
     )
+
     await callback.message.answer(text, parse_mode="HTML", reply_markup=main_menu_kb())
-    
     await state.clear()
 
 

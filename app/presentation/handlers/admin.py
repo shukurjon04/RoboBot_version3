@@ -3,11 +3,13 @@ import csv
 import io
 import logging
 import asyncio
+import os
+import openpyxl
 from datetime import datetime
 from typing import List
 from aiogram import Router, F
 from aiogram.filters import Command, CommandObject
-from aiogram.types import Message, BufferedInputFile, CallbackQuery
+from aiogram.types import Message, BufferedInputFile, CallbackQuery, FSInputFile
 from aiogram.exceptions import TelegramRetryAfter, TelegramForbiddenError
 from aiogram.fsm.context import FSMContext
 from sqlalchemy import select, update
@@ -16,9 +18,9 @@ from openpyxl.styles import Font, Alignment
 
 from app.config.settings import settings
 from app.infrastructure.repositories.sqlalchemy import SQLAlchemyUserRepository, SQLAlchemyChannelRepository
-from app.infrastructure.database.models import WebinarSettings, User, Channel
+from app.infrastructure.database.models import WebinarSettings, User, Channel, WebinarCheckin
 from app.utils.formatters import format_uzb_time
-from app.presentation.keyboards.admin import admin_kb, admin_back_kb
+from app.presentation.keyboards.admin import admin_kb, admin_back_kb, suspicious_users_kb, checkin_button_kb
 from app.presentation.keyboards.admin_channels import channels_list_kb, back_to_channels_kb
 from app.domain.enums import UserStatus
 from app.presentation.states import AdminSG
@@ -232,8 +234,55 @@ async def suspicious_users(message: Message, session):
     
     text += "\n💡 Ularni bloklash uchun: /block [telegram_id]"
     text += "\n💡 Ballarni 0 ga: /reset [telegram_id]"
+    text += "\n💡 Xabar yuborish uchun: /send [telegram_id]"
     
-    await message.answer(text, parse_mode="HTML")
+    await message.answer(text, parse_mode="HTML", reply_markup=suspicious_users_kb())
+
+@router.callback_query(F.data == "send_to_suspicious")
+async def ask_suspicious_broadcast(callback: CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        return
+        
+    await state.set_state(AdminSG.wait_suspicious_broadcast_content)
+    await callback.message.answer(
+        "✍️ <b>Barcha shubhali foydalanuvchilarga xabar yuborish</b>\n\n"
+        "Xabar matn, rasm, video yoki boshqa fayl ko'rinishida bo'lishi mumkin.\n"
+        "Yuborishni bekor qilish uchun /admin buyrug'ini bosing.",
+        parse_mode="HTML",
+        reply_markup=admin_back_kb()
+    )
+    await callback.answer()
+
+@router.message(AdminSG.wait_suspicious_broadcast_content)
+async def process_suspicious_broadcast(message: Message, state: FSMContext, session):
+    if not is_admin(message.from_user.id):
+        return
+        
+    if message.text == "⬅️ Orqaga":
+        await admin_back_to_main(message, state)
+        return
+
+    # Fetch all suspicious users
+    stmt = select(User).where(User.full_name == None)
+    result = await session.execute(stmt)
+    users = result.scalars().all()
+    
+    if not users:
+        await message.answer("❌ Shubhali foydalanuvchilar topilmadi.")
+        await state.clear()
+        return
+
+    await message.answer(
+        f"📤 <b>Rassilka boshlandi!</b>\n"
+        f"Xabar {len(users)} ta shubhali foydalanuvchiga yuboriladi.",
+        parse_mode="HTML"
+    )
+    
+    # Reuse the manual broadcast logic function
+    asyncio.create_task(_run_manual_broadcast(message, users, message.from_user.id))
+    
+    await state.clear()
+    await message.answer("Jarayon fonda davom etmoqda...", reply_markup=admin_kb)
 
 @router.message(Command("block"))
 async def block_user(message: Message, command: CommandObject, session):
@@ -268,8 +317,164 @@ async def reset_balance(message: Message, command: CommandObject, session):
         await session.execute(stmt)
         await session.commit()
         await message.answer(f"✅ Foydalanuvchi {telegram_id} ballari 0 ga tushirildi.")
+
     except Exception as e:
         await message.answer(f"❌ Xato: {e}")
+
+@router.message(F.text == "✅ Check-in")
+async def checkin_ask_text(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return
+        
+    await state.set_state(AdminSG.wait_checkin_text)
+    await message.answer(
+        "✍️ <b>Check-in xabar matnini kiriting:</b>\n"
+        "<i>Default: Efirda qatnashayotgan bo'lsangiz, tugmani bosing</i>\n\n"
+        "Yoki 'skip' deb yozing (standart matn uchun).",
+        parse_mode="HTML",
+        reply_markup=admin_back_kb()
+    )
+
+@router.message(AdminSG.wait_checkin_text)
+async def process_checkin_text(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return
+
+    if message.text == "⬅️ Orqaga":
+        await admin_back_to_main(message, state)
+        return
+        
+    text = message.text
+    if text.lower() == "skip":
+        text = "Efirda qatnashayotgan bo'lsangiz, tugmani bosing 👇"
+    
+    await state.update_data(checkin_text=text)
+    await state.set_state(AdminSG.wait_checkin_channel)
+    
+    await message.answer(
+        "🔗 <b>Qaysi kanalga yuborilsin?</b>\n\n"
+        "Kanalning <b>Username</b>ini (masalan: @kanalim), <b>ID</b>sini, yoki <b>Link</b>ini yuboring.\n"
+        "<i>Bot o'sha kanalda admin bo'lishi kerak!</i>",
+        parse_mode="HTML"
+    )
+
+@router.message(AdminSG.wait_checkin_channel)
+async def process_checkin_channel(message: Message, state: FSMContext, bot):
+    if not is_admin(message.from_user.id):
+        return
+        
+    target = message.text.strip()
+    
+    # Try to extract username from link if present
+    if "t.me/" in target:
+        parts = target.split('/')
+        if parts:
+            possible_username = parts[-1]
+            if not possible_username.startswith('+') and not possible_username.isdigit(): 
+                target = f"@{possible_username}"
+
+    data = await state.get_data()
+    text = data.get('checkin_text')
+    
+    bot_info = await bot.get_me()
+    checkin_kb = checkin_button_kb(bot_info.username)
+    
+    try:
+        await bot.send_message(chat_id=target, text=text, reply_markup=checkin_kb)
+        await message.answer(f"✅ <b>Xabar muvaffaqiyatli yuborildi!</b>\nTarget: {target}", parse_mode="HTML", reply_markup=admin_kb)
+    except Exception as e:
+        await message.answer(f"❌ <b>Xatolik yuz berdi:</b>\n{e}\n\nBot kanalda admin ekanligini tekshiring.", parse_mode="HTML", reply_markup=admin_kb)
+        
+    await state.clear()
+
+@router.message(Command("send"))
+async def send_message_command(message: Message, command: CommandObject, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return
+    
+    # If ID provided in command
+    if command.args:
+        try:
+            telegram_id = int(command.args)
+            await state.update_data(send_message_id=telegram_id)
+            await state.set_state(AdminSG.wait_send_message_content)
+            await message.answer(
+                f"✍️ <b>Foydalanuvchi ({telegram_id}) ga xabar yuboring:</b>\n\n"
+                "Istalgan turdagi xabarni (matn, rasm, video, ovozli xabar) yuborishingiz mumkin.",
+                parse_mode="HTML",
+                reply_markup=admin_back_kb()
+            )
+        except ValueError:
+            await message.answer("❌ ID raqam bo'lishi kerak!")
+    else:
+        # Ask for ID
+        await state.set_state(AdminSG.wait_send_message_id)
+        await message.answer(
+            "✍️ <b>Xabar yuborish uchun foydalanuvchi ID sini kiriting:</b>",
+            parse_mode="HTML",
+            reply_markup=admin_back_kb()
+        )
+
+@router.message(AdminSG.wait_send_message_id)
+async def process_send_message_id(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return
+
+    if message.text == "⬅️ Orqaga":
+        await admin_back_to_main(message, state)
+        return
+
+    try:
+        telegram_id = int(message.text)
+        await state.update_data(send_message_id=telegram_id)
+        await state.set_state(AdminSG.wait_send_message_content)
+        await message.answer(
+            f"✍️ <b>Foydalanuvchi ({telegram_id}) ga xabar yuboring:</b>\n\n"
+            "Istalgan turdagi xabarni (matn, rasm, video, ovozli xabar) yuborishingiz mumkin.",
+            parse_mode="HTML",
+            reply_markup=admin_back_kb()
+        )
+    except ValueError:
+        await message.answer("❌ ID raqam bo'lishi kerak! Qaytadan kiriting:")
+
+@router.message(AdminSG.wait_send_message_content)
+async def process_send_message_content(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return
+
+    if message.text == "⬅️ Orqaga":
+        await admin_back_to_main(message, state)
+        return
+
+    data = await state.get_data()
+    target_id = data.get('send_message_id')
+    
+    if not target_id:
+        await message.answer("❌ Xatolik yuz berdi. Iltimos jarayonni boshidan boshlang.")
+        await state.clear()
+        return
+
+    try:
+        # Validate target ID type just in case
+        target_id = int(target_id)
+        
+        # Copy the message content to the target user
+        await message.copy_to(chat_id=target_id)
+        
+        await message.answer(
+            f"✅ <b>Xabar yuborildi!</b>\n"
+            f"ID: {target_id}", 
+            parse_mode="HTML",
+            reply_markup=admin_kb
+        )
+        await state.clear()
+        
+    except TelegramForbiddenError:
+        await message.answer(f"🚫 Foydalanuvchi ({target_id}) botni bloklagan.")
+        await state.clear()
+    except Exception as e:
+        await message.answer(f"❌ Yuborishda xatolik: {e}")
+        await state.clear()
 
 @router.message(F.text == "⏰ Vebinar vaqti")
 async def set_webinar_time_button(message: Message, state: FSMContext):
@@ -648,4 +853,61 @@ async def process_restore_db(message: Message, state: FSMContext, bot):
         await message.answer("✅ Baza muvaffaqiyatli tiklandi!", reply_markup=admin_kb)
     except Exception as e:
         await message.answer(f"❌ Xatolik yuz berdi: {e}")
+
+@router.message(F.text == "📥 Vebinar qatnashchilari")
+async def export_webinar_participants(message: Message, session):
+    if not is_admin(message.from_user.id):
+        return
+        
+    await message.answer("📥 Vebinar qatnashchilarini yuklab olinmoqda...")
+    
+    try:
+        stmt = (
+            select(WebinarCheckin, User)
+            .join(User, WebinarCheckin.user_id == User.telegram_id)
+            .order_by(WebinarCheckin.checked_at.desc())
+        )
+        result = await session.execute(stmt)
+        records = result.all() # list of (WebinarCheckin, User)
+        
+        if not records:
+            await message.answer("❌ Hali hech kim ro'yxatdan o'tmagan.")
+            return
+
+        # Create Excel
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Qatnashchilar"
+        
+        # Header
+        headers = ["ID", "Telegram ID", "Ism", "Username", "Telefon", "Hudud", "Yosh", "Status", "Check-in Vaqti"]
+        ws.append(headers)
+        
+        for checkin, user in records:
+            ws.append([
+                user.id,
+                user.telegram_id,
+                user.full_name or user.first_name,
+                f"@{user.username}" if user.username else "",
+                user.phone_number,
+                user.region,
+                user.age_range,
+                user.status,
+                checkin.checked_at.strftime("%Y-%m-%d %H:%M:%S")
+            ])
+            
+        filename = f"webinar_qatnashchilar_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+        wb.save(filename)
+        
+        file = FSInputFile(filename)
+        await message.answer_document(file, caption="📊 Vebinar qatnashchilari ro'yxati")
+        
+        # Cleanup
+        try:
+            os.remove(filename)
+        except:
+            pass
+    except Exception as e:
+        logger.error(f"Export error: {e}")
+        await message.answer(f"❌ Eksport xatoligi: {e}")
 

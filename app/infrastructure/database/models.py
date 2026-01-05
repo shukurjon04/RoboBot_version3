@@ -113,3 +113,11 @@ class WebinarSettings(Base, AsyncAttrs, TimestampMixin):
     sent_15m: Mapped[bool] = mapped_column(Boolean, default=False)
     sent_5m: Mapped[bool] = mapped_column(Boolean, default=False)
     sent_start: Mapped[bool] = mapped_column(Boolean, default=False)
+
+class WebinarCheckin(Base, AsyncAttrs, TimestampMixin):
+    __tablename__ = "webinar_checkins"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.telegram_id"))
+    checked_at: Mapped[datetime] = mapped_column(DateTime, default=func.now())
+    webinar_date: Mapped[datetime] = mapped_column(DateTime, default=func.now())
