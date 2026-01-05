@@ -16,6 +16,9 @@ admin_kb = ReplyKeyboardMarkup(
         ],
         [
             KeyboardButton(text="📥 Vebinar qatnashchilari"),
+            KeyboardButton(text="♻️ Vebinar tiklash")
+        ],
+        [
             KeyboardButton(text="🏠 Asosiy menyu")
         ],
         [

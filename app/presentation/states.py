@@ -38,3 +38,4 @@ class AdminSG(StatesGroup):
     wait_suspicious_broadcast_content = State()
     wait_checkin_text = State()
     wait_checkin_channel = State()
+    wait_webinar_restore = State()

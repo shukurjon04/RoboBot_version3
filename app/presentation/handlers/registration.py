@@ -249,34 +249,42 @@ async def process_age_range(
     
     reg_service = get_reg_service(user_repo, referral_repo)
     
-    # Update Profile
-    await reg_service.update_user_profile(
-        db_user.telegram_id, 
-        full_name=full_name, 
-        phone_number=phone_number, 
-        region=region,
-        study_status=study_status,
-        age_range=age_range
-    )
-    
-    # Complete Registration (Activates user, gives bonus)
-    referrer_id = await reg_service.complete_registration(db_user.telegram_id)
-    
-    # Notify Referrer
-    if referrer_id:
-        try:
-            await callback.bot.send_message(
-                chat_id=referrer_id,
-                text=(
-                    f"👤 <b>Yangi Foydalanuvchi!</b>\n\n"
-                    f"Tabriklaymiz! <b>{db_user.full_name or db_user.first_name}</b> sizning havolangiz orqali ro'yxatdan o'tdi.\n"
-                    f"Sizga <b>10 ball</b> taqdim etildi! ✨"
-                ),
-                parse_mode="HTML"
-            )
-        except Exception:
-            # Referrer might have blocked the bot, ignore
-            pass
+    # Update Profile and Complete Registration
+    try:
+        # Update Profile
+        await reg_service.update_user_profile(
+            db_user.telegram_id, 
+            full_name=full_name, 
+            phone_number=phone_number, 
+            region=region,
+            study_status=study_status,
+            age_range=age_range
+        )
+        
+        # Complete Registration (Activates user, gives bonus)
+        referrer_id = await reg_service.complete_registration(db_user.telegram_id)
+        
+        # Notify Referrer
+        if referrer_id:
+            try:
+                await callback.bot.send_message(
+                    chat_id=referrer_id,
+                    text=(
+                        f"👤 <b>Yangi Foydalanuvchi!</b>\n\n"
+                        f"Tabriklaymiz! <b>{db_user.full_name or db_user.first_name}</b> sizning havolangiz orqali ro'yxatdan o'tdi.\n"
+                        f"Sizga <b>10 ball</b> taqdim etildi! ✨"
+                    ),
+                    parse_mode="HTML"
+                )
+            except Exception:
+                # Referrer might have blocked the bot, ignore
+                pass
+                
+    except Exception as e:
+        logging.error(f"Registration Error for user {db_user.telegram_id}: {e}", exc_info=True)
+        await callback.message.answer("❌ Ro'yxatdan o'tishda xatolik yuz berdi. Iltimos qaytadan urinib ko'ring yoki adminga murojaat qiling.")
+        await state.clear()
+        return
     
     try:
         await callback.message.delete()

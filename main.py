@@ -17,6 +17,7 @@ from app.config.settings import settings
 from app.presentation.middlewares.chat_type import ChatTypeMiddleware
 from app.presentation.middlewares.user import UserMiddleware
 from app.presentation.middlewares.status import CheckStatusMiddleware
+from app.presentation.middlewares.error_handler import ErrorHandlingMiddleware
 from app.presentation.handlers import registration, user, admin, profile
 from app.infrastructure.database.db_helper import engine, session_factory
 from app.use_cases.scheduler import WebinarSchedulerService
@@ -156,7 +157,9 @@ async def main():
         dp.callback_query.outer_middleware(ChatTypeMiddleware())
         
         dp.update.middleware(UserMiddleware())
+        dp.message.middleware(ErrorHandlingMiddleware()) # Global error handler
         dp.message.middleware(CheckStatusMiddleware())
+        dp.callback_query.middleware(ErrorHandlingMiddleware()) # Global error handler
         dp.callback_query.middleware(CheckStatusMiddleware())
 
         # Register Routers

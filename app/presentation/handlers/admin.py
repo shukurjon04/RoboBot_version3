@@ -366,7 +366,13 @@ async def process_checkin_channel(message: Message, state: FSMContext, bot):
     target = message.text.strip()
     
     # Try to extract username from link if present
+    # Process link to extract username
     if "t.me/" in target:
+        # Remove query parameters
+        target = target.split('?')[0]
+        # Remove trailing slash
+        target = target.rstrip('/')
+        
         parts = target.split('/')
         if parts:
             possible_username = parts[-1]
@@ -911,3 +917,97 @@ async def export_webinar_participants(message: Message, session):
         logger.error(f"Export error: {e}")
         await message.answer(f"❌ Eksport xatoligi: {e}")
 
+@router.message(F.text == "♻️ Vebinar tiklash")
+async def ask_webinar_restore(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return
+        
+    await state.set_state(AdminSG.wait_webinar_restore)
+    await message.answer(
+        "📂 <b>Vebinar qatnashchilarini tiklash</b>\n\n"
+        "Excel faylni (.xlsx) yuboring.\n"
+        "<i>Fayl quyidagi ustunlarga ega bo'lishi kerak: 'ID' (Telegram ID)</i>\n\n"
+        "⚠️ <b>Eslatma:</b> Bu amal mavjud bazaga yangi qatnashchilarni qo'shadi. Takroriy ID lar o'tkazib yuboriladi.",
+        parse_mode="HTML",
+        reply_markup=admin_back_kb()
+    )
+
+@router.message(AdminSG.wait_webinar_restore, F.document)
+async def process_webinar_restore(message: Message, state: FSMContext, bot, session):
+    if not is_admin(message.from_user.id):
+        return
+        
+    if message.text == "⬅️ Orqaga":
+        await admin_back_to_main(message, state)
+        return
+
+    document = message.document
+    if not document.file_name.endswith('.xlsx'):
+        await message.answer("❌ Faqat .xlsx formatidagi Excel faylni yuboring!")
+        return
+    
+    await message.answer("⏳ Tekshirish va tiklash jarayoni boshlandi, kuting...")
+    
+    try:
+        file_io = await bot.download(document)
+        wb = openpyxl.load_workbook(file_io)
+        ws = wb.active
+        
+        added_count = 0
+        skipped_count = 0
+        
+        # Headers are in row 1, data starts from row 2
+        # We need to find the column index for "Telegram ID" or "ID"
+        headers = [cell.value for cell in ws[1]]
+        
+        # Try to find telegram id column
+        telegram_id_idx = -1
+        for idx, h in enumerate(headers):
+            if str(h).lower() in ["telegram id", "id", "user id", "userid"]:
+                telegram_id_idx = idx
+                break
+                
+        if telegram_id_idx == -1:
+            await message.answer("❌ Excel faylda 'Telegram ID' yoki 'ID' ustuni topilmadi!")
+            return
+            
+        # Iterate rows
+        for row in ws.iter_rows(min_row=2, values_only=True):
+            if not row: continue
+            
+            try:
+                tg_id = row[telegram_id_idx]
+                if not tg_id: continue
+                
+                tg_id = int(tg_id)
+                
+                # Check if exists
+                stmt = select(WebinarCheckin).where(WebinarCheckin.user_id == tg_id)
+                result = await session.execute(stmt)
+                if result.scalars().first():
+                    skipped_count += 1
+                    continue
+                    
+                # Add checkin
+                checkin = WebinarCheckin(user_id=tg_id, webinar_date=datetime.now())
+                session.add(checkin)
+                added_count += 1
+                
+            except Exception as row_err:
+                logger.warning(f"Skipping row due to error: {row_err}")
+                skipped_count += 1
+                
+        await session.commit()
+        
+        await state.clear()
+        
+        result_text = (
+            "✅ <b>Tiklash yakunlandi!</b>\n\n"
+            f"➕ Qo'shildi: {added_count}\n"
+            f"⏭ O'tkazib yuborildi (mavjud): {skipped_count}"
+        )
+        await message.answer(result_text, parse_mode="HTML", reply_markup=admin_kb)
+        
+    except Exception as e:
+        logger.error(f"Restore error: {e}", exc_info=True)
+        await message.answer(f"❌ Xatolik yuz berdi: {e}")
