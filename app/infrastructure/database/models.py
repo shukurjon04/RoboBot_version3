@@ -121,3 +121,9 @@ class WebinarCheckin(Base, AsyncAttrs, TimestampMixin):
     user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.telegram_id"))
     checked_at: Mapped[datetime] = mapped_column(DateTime, default=func.now())
     webinar_date: Mapped[datetime] = mapped_column(DateTime, default=func.now())
+
+class SystemSettings(Base, AsyncAttrs, TimestampMixin):
+    __tablename__ = "system_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    point_collection_end_time: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)

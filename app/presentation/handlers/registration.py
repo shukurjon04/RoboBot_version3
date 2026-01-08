@@ -262,10 +262,10 @@ async def process_age_range(
         )
         
         # Complete Registration (Activates user, gives bonus)
-        referrer_id = await reg_service.complete_registration(db_user.telegram_id)
+        referrer_id, points_awarded = await reg_service.complete_registration(db_user.telegram_id)
         
-        # Notify Referrer
-        if referrer_id:
+        # Notify Referrer (only if points were awarded)
+        if referrer_id and points_awarded:
             try:
                 await callback.bot.send_message(
                     chat_id=referrer_id,

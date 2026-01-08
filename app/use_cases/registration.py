@@ -46,15 +46,33 @@ class RegistrationService:
         # Finalize user status
         await self.user_repo.update_status(telegram_id, UserStatus.ACTIVE)
         
-        # Add welcome bonus to user (if any rules exist) - optional
-        await self.user_repo.add_points(telegram_id, 10, "Registration Bonus")
+        # Check if point collection is still allowed
+        from app.infrastructure.database.models import SystemSettings
+        from sqlalchemy import select
+        from datetime import datetime
+        
+        stmt = select(SystemSettings).limit(1)
+        result = await self.user_repo.session.execute(stmt)
+        settings_obj = result.scalars().first()
+        
+        allow_points = True
+        if settings_obj and settings_obj.point_collection_end_time:
+            if datetime.now() > settings_obj.point_collection_end_time:
+                allow_points = False
+
+        if allow_points:
+            # Add welcome bonus to user (if any rules exist) - optional
+            await self.user_repo.add_points(telegram_id, 10, "Registration Bonus")
 
         # Process referral reward
         user = await self.user_repo.get_user(telegram_id)
         if user.referrer_id:
              await self.referral_repo.confirm_referral(user.referrer_id, telegram_id)
-             # Add points to referrer
-             await self.user_repo.add_points(user.referrer_id, 10, f"Referral: {user.first_name}")
-             return user.referrer_id
+             
+             if allow_points:
+                 # Add points to referrer
+                 await self.user_repo.add_points(user.referrer_id, 10, f"Referral: {user.first_name}")
+             
+             return user.referrer_id, allow_points
         
-        return None
+        return None, allow_points

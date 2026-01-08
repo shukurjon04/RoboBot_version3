@@ -22,6 +22,10 @@ admin_kb = ReplyKeyboardMarkup(
             KeyboardButton(text="🏠 Asosiy menyu")
         ],
         [
+            KeyboardButton(text="🛑 Ball yig'ishni to'xtatish"),
+            KeyboardButton(text="▶️ Ball yig'ishni tiklash")
+        ],
+        [
             KeyboardButton(text="💾 Bazani yuklash"),
             KeyboardButton(text="♻️ Bazani tiklash")
         ]

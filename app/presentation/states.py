@@ -39,3 +39,10 @@ class AdminSG(StatesGroup):
     wait_checkin_text = State()
     wait_checkin_channel = State()
     wait_webinar_restore = State()
+    
+    # Point collection stop states
+    wait_point_stop_year = State()
+    wait_point_stop_month = State()
+    wait_point_stop_day = State()
+    wait_point_stop_hour = State()
+    wait_point_stop_minute = State()

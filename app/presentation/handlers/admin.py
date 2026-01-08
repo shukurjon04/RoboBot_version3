@@ -18,7 +18,7 @@ from openpyxl.styles import Font, Alignment
 
 from app.config.settings import settings
 from app.infrastructure.repositories.sqlalchemy import SQLAlchemyUserRepository, SQLAlchemyChannelRepository
-from app.infrastructure.database.models import WebinarSettings, User, Channel, WebinarCheckin
+from app.infrastructure.database.models import WebinarSettings, User, Channel, WebinarCheckin, SystemSettings
 from app.utils.formatters import format_uzb_time
 from app.presentation.keyboards.admin import admin_kb, admin_back_kb, suspicious_users_kb, checkin_button_kb
 from app.presentation.keyboards.admin_channels import channels_list_kb, back_to_channels_kb
@@ -1011,3 +1011,159 @@ async def process_webinar_restore(message: Message, state: FSMContext, bot, sess
     except Exception as e:
         logger.error(f"Restore error: {e}", exc_info=True)
         await message.answer(f"❌ Xatolik yuz berdi: {e}")
+
+@router.message(F.text == "🛑 Ball yig'ishni to'xtatish")
+async def set_point_stop_time_button(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return
+    
+    await state.set_state(AdminSG.wait_point_stop_year)
+    await message.answer(
+        "📅 <b>Ball yig'ish to'xtatish yilini tanlang:</b>",
+        parse_mode="HTML",
+        reply_markup=webinar_years_kb(prefix="ps", back_callback="ps_back_to_admin")
+    )
+
+@router.callback_query(F.data == "ps_back_to_admin")
+async def ps_back_to_admin_cb(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await callback.message.delete()
+    text = (
+        "👨‍💻 <b>Admin Panel</b>\n\n"
+        "Quyidagi bo'limlardan birini tanlang:"
+    )
+    await callback.message.answer(text, parse_mode="HTML", reply_markup=admin_kb)
+
+@router.callback_query(AdminSG.wait_point_stop_year, F.data.startswith("ps_year:"))
+async def process_ps_year_cb(callback: CallbackQuery, state: FSMContext):
+    year = callback.data.split(":")[1]
+    await state.update_data(ps_year=int(year))
+    await state.set_state(AdminSG.wait_point_stop_month)
+    await callback.message.edit_text(
+        "📅 <b>Ball yig'ish to'xtatish oyini tanlang:</b>",
+        parse_mode="HTML",
+        reply_markup=webinar_months_kb(prefix="ps", back_callback="ps_back_to_year")
+    )
+
+@router.callback_query(AdminSG.wait_point_stop_month, F.data.startswith("ps_month:"))
+async def process_ps_month_cb(callback: CallbackQuery, state: FSMContext):
+    month = callback.data.split(":")[1]
+    await state.update_data(ps_month=int(month))
+    data = await state.get_data()
+    year = data['ps_year']
+    
+    await state.set_state(AdminSG.wait_point_stop_day)
+    await callback.message.edit_text(
+        "📅 <b>Ball yig'ish to'xtatish kunini tanlang:</b>",
+        parse_mode="HTML",
+        reply_markup=webinar_days_kb(year, int(month), prefix="ps", back_callback="ps_back_to_month")
+    )
+
+@router.callback_query(AdminSG.wait_point_stop_day, F.data.startswith("ps_day:"))
+async def process_ps_day_cb(callback: CallbackQuery, state: FSMContext):
+    day = callback.data.split(":")[1]
+    await state.update_data(ps_day=int(day))
+    
+    await state.set_state(AdminSG.wait_point_stop_hour)
+    await callback.message.edit_text(
+        "🕐 <b>Ball yig'ish to'xtatish soatini tanlang:</b>",
+        parse_mode="HTML",
+        reply_markup=webinar_hours_kb(prefix="ps", back_callback="ps_back_to_day")
+    )
+
+@router.callback_query(AdminSG.wait_point_stop_hour, F.data.startswith("ps_hour:"))
+async def process_ps_hour_cb(callback: CallbackQuery, state: FSMContext):
+    hour = callback.data.split(":")[1]
+    await state.update_data(ps_hour=int(hour))
+    
+    await state.set_state(AdminSG.wait_point_stop_minute)
+    await callback.message.edit_text(
+        "🕐 <b>Ball yig'ish to'xtatish daqiqasini tanlang:</b>",
+        parse_mode="HTML",
+        reply_markup=webinar_minutes_kb(hour, prefix="ps", back_callback="ps_back_to_hour")
+    )
+
+@router.callback_query(AdminSG.wait_point_stop_minute, F.data.startswith("ps_minute:"))
+async def process_ps_minute_cb(callback: CallbackQuery, state: FSMContext, session):
+    minute = callback.data.split(":")[1]
+    await state.update_data(ps_minute=int(minute))
+    
+    data = await state.get_data()
+    year = data['ps_year']
+    month = data['ps_month']
+    day = data['ps_day']
+    hour = data['ps_hour']
+    
+    stop_dt = datetime(year, month, day, hour, int(minute))
+    
+    # Save to SystemSettings
+    stmt = select(SystemSettings).limit(1)
+    result = await session.execute(stmt)
+    settings_obj = result.scalars().first()
+    
+    if not settings_obj:
+        settings_obj = SystemSettings(point_collection_end_time=stop_dt)
+        session.add(settings_obj)
+    else:
+        settings_obj.point_collection_end_time = stop_dt
+    
+    await session.commit()
+    
+    await state.clear()
+    await callback.message.delete()
+    await callback.message.answer(
+        f"✅ <b>Ball yig'ish to'xtatish vaqti belgilandi:</b>\n\n"
+        f"📅 {stop_dt.strftime('%Y-%m-%d')}\n"
+        f"🕐 {format_uzb_time(stop_dt)}",
+        parse_mode="HTML",
+        reply_markup=admin_kb
+    )
+
+@router.callback_query(F.data == "ps_back_to_year")
+async def ps_back_to_year(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(AdminSG.wait_point_stop_year)
+    await callback.message.edit_text("📅 <b>Ball yig'ish to'xtatish yilini tanlang:</b>", parse_mode="HTML", reply_markup=webinar_years_kb(prefix="ps", back_callback="ps_back_to_admin"))
+
+@router.callback_query(F.data == "ps_back_to_month")
+async def ps_back_to_month(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(AdminSG.wait_point_stop_month)
+    await callback.message.edit_text("📅 <b>Ball yig'ish to'xtatish oyini tanlang:</b>", parse_mode="HTML", reply_markup=webinar_months_kb(prefix="ps", back_callback="ps_back_to_year"))
+
+@router.callback_query(F.data == "ps_back_to_day")
+async def ps_back_to_day(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    year = data['ps_year']
+    month = data['ps_month']
+    await state.set_state(AdminSG.wait_point_stop_day)
+    await callback.message.edit_text("📅 <b>Ball yig'ish to'xtatish kunini tanlang:</b>", parse_mode="HTML", reply_markup=webinar_days_kb(year, month, prefix="ps", back_callback="ps_back_to_month"))
+
+@router.callback_query(F.data == "ps_back_to_hour")
+async def ps_back_to_hour(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(AdminSG.wait_point_stop_hour)
+    await callback.message.edit_text("🕐 <b>Ball yig'ish to'xtatish soatini tanlang:</b>", parse_mode="HTML", reply_markup=webinar_hours_kb(prefix="ps", back_callback="ps_back_to_day"))
+
+@router.message(F.text == "▶️ Ball yig'ishni tiklash")
+async def resume_point_collection(message: Message, session):
+    if not is_admin(message.from_user.id):
+        return
+    
+    # Clear the point collection end time
+    stmt = select(SystemSettings).limit(1)
+    result = await session.execute(stmt)
+    settings_obj = result.scalars().first()
+    
+    if settings_obj:
+        settings_obj.point_collection_end_time = None
+        await session.commit()
+        await message.answer(
+            "✅ <b>Ball yig'ish jarayoni qayta tiklandi!</b>\n\n"
+            "Endi foydalanuvchilar yana ball yig'ishlari mumkin.",
+            parse_mode="HTML",
+            reply_markup=admin_kb
+        )
+    else:
+        await message.answer(
+            "ℹ️ <b>Ball yig'ish jarayoni allaqachon faol.</b>",
+            parse_mode="HTML",
+            reply_markup=admin_kb
+        )
