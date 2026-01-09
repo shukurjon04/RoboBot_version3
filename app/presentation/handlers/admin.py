@@ -960,11 +960,17 @@ async def process_webinar_restore(message: Message, state: FSMContext, bot, sess
         # We need to find the column index for "Telegram ID" or "ID"
         headers = [cell.value for cell in ws[1]]
         
-        # Try to find telegram id column
+        # Try to find telegram id column with priorities
         telegram_id_idx = -1
-        for idx, h in enumerate(headers):
-            if str(h).lower() in ["telegram id", "id", "user id", "userid"]:
-                telegram_id_idx = idx
+        for priority_names in [
+            ["telegram id", "tg id", "telegram_id", "user id", "user_id"],
+            ["id", "userid"] # Fallback to general ID
+        ]:
+            for idx, h in enumerate(headers):
+                if str(h).lower().strip() in priority_names:
+                    telegram_id_idx = idx
+                    break
+            if telegram_id_idx != -1:
                 break
                 
         if telegram_id_idx == -1:
@@ -981,6 +987,14 @@ async def process_webinar_restore(message: Message, state: FSMContext, bot, sess
                 
                 tg_id = int(tg_id)
                 
+                # Check if user exists
+                user_stmt = select(User).where(User.telegram_id == tg_id)
+                user_res = await session.execute(user_stmt)
+                if not user_res.scalars().first():
+                    logger.warning(f"Skipping restore for {tg_id}: User not found in database.")
+                    skipped_count += 1
+                    continue
+
                 # Check if exists
                 stmt = select(WebinarCheckin).where(WebinarCheckin.user_id == tg_id)
                 result = await session.execute(stmt)
@@ -1167,3 +1181,48 @@ async def resume_point_collection(message: Message, session):
             parse_mode="HTML",
             reply_markup=admin_kb
         )
+
+@router.message(F.text == "🗑 Vebinar tozalash")
+async def clear_webinar_confirm(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return
+    
+    from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
+    await state.set_state(AdminSG.wait_clear_webinar_confirm)
+    await message.answer(
+        "🔞 <b>DIQQAT!</b>\n\n"
+        "Vebinar qatnashchilari jadvalini butunlay tozalashni xohlaysizmi?\n"
+        "Bu amalni ortga qaytarib bo'lmaydi!",
+        parse_mode="HTML",
+        reply_markup=ReplyKeyboardMarkup(
+            keyboard=[
+                [KeyboardButton(text="✅ Ha, hammasini o'chirib yuborish")],
+                [KeyboardButton(text="⬅️ Orqaga")]
+            ],
+            resize_keyboard=True
+        )
+    )
+
+@router.message(AdminSG.wait_clear_webinar_confirm)
+async def process_clear_webinar(message: Message, state: FSMContext, session):
+    if not is_admin(message.from_user.id):
+        return
+    
+    if message.text == "⬅️ Orqaga":
+        await admin_back_to_main(message, state)
+        return
+    
+    if message.text == "✅ Ha, hammasini o'chirib yuborish":
+        from sqlalchemy import delete
+        stmt = delete(WebinarCheckin)
+        await session.execute(stmt)
+        await session.commit()
+        
+        await state.clear()
+        await message.answer(
+            "✅ <b>Vebinar qatnashchilari jadvali muvaffaqiyatli tozalandi!</b>",
+            parse_mode="HTML",
+            reply_markup=admin_kb
+        )
+    else:
+        await message.answer("Iltimos, quyidagi tugmalardan birini tanlang:")

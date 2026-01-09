@@ -58,9 +58,9 @@ async def show_points_and_link(
         f"🔹 25 ta tayyor 3D Svetofor modellari;\n"
         f"💰 Jami 8 000 000 so‘mlik vaucherlar jamg‘armasi!\n"
         f"✨ Biz kabi texnologiya o‘qituvchilari uchun bu ham bilim, ham dars jarayonida kerak bo‘ladigan zamonaviy jihozlarni yutib olish uchun ajoyib imkoniyat!\n\n"
-        f"Siz ham hoziroq ro‘yxatdan o‘ting va 100 000 so‘m bonusingizni oling: 👇"
+        f"Siz ham hoziroq ro‘yxatdan o‘ting va 100 000 so‘m bonusingizni oling: 👇 \n{link}"
     )
-    share_url = f"https://t.me/share/url?url={quote(link)}&text={quote(share_text)}"
+    share_url = f"https://t.me/share/url?&text={quote(share_text)}"
     
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="♻️ Do'stlarga ulashish", url=share_url)]
