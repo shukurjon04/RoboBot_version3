@@ -78,9 +78,13 @@ class BackupService:
 
         async with session_factory() as session:
             try:
+                # 0. Disable foreign keys (SQLite specific)
+                await session.execute(text("PRAGMA foreign_keys = OFF"))
+
                 # 1. Clear existing data (Order matters due to Foreign Keys!)
                 # Deleting children first
                 tables_to_clear = [
+                    "webinar_checkins", # Added webinar_checkins to clear list
                     "user_rewards",
                     "referrals",
                     "point_history",
@@ -183,6 +187,8 @@ class BackupService:
                             raise e # Checkpoint: If any sheet fails, everything rolls back
                 
                 await session.commit()
+                # Re-enable foreign keys after successful commit
+                await session.execute(text("PRAGMA foreign_keys = ON"))
                 
             except Exception as e:
                 await session.rollback()
