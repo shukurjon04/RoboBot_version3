@@ -50,6 +50,9 @@ fi
 echo ""
 echo "Step 2: Updating code..."
 if [ -d ".git" ]; then
+    # Force reset local changes to avoid merge conflicts
+    git checkout .
+    git clean -fd
     git pull
     print_success "Code updated from git"
 else
