@@ -192,9 +192,9 @@ Kodni har safar `main` branchga push qilganingizda server avtomatik yangilanishi
 1.  GitHub-dagi repository-ingizga kiring (`Settings` -> `Secrets and variables` -> `Actions`).
 2.  Quyidagi **Secrets**-larni qo'shing:
     -   `HOST`: Serveringiz IP manzili.
-    -   `USERNAME`: Serverga ulanadigan foydalanuvchi nomi (masalan: `root` yoki `shukurjon`).
-    -   `SSH_PRIVATE_KEY`: Serverga ulanish uchun ishlatiladigan SSH private key (odatda `~/.ssh/id_rsa` fayli ichidagisi).
+    -   `USERNAME`: Serverga ulanadigan foydalanuvchi nomi.
+    -   `PASSWORD`: Serveringizga SSH orqali ulanish paroli.
 
-3.  Serverda loyiha manzili `/home/shukurjon/projects/botrobo` ekanligiga ishonch hosil qiling. Agar boshqa manzil bo'lsa, `.github/workflows/deploy.yml` faylidagi `cd` buyrug'ini tahrirlang.
+3.  Serverda loyiha manzili `/home/shukurjon/projects/botrobo` ekanligiga ishonch hosil qiling.
 
-Endi har safar kodni push qilganingizda, GitHub avtomatik ravishda serverga ulanadi va `./deployment/deploy.sh` skriptini ishga tushiradi.
+Endi har safar kodni push qilganingizda, GitHub avtomatik ravishda serverga ulanadi va Docker konteynerlarini yangilaydi.
