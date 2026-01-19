@@ -20,7 +20,10 @@ from app.config.settings import settings
 from app.infrastructure.repositories.sqlalchemy import SQLAlchemyUserRepository, SQLAlchemyChannelRepository
 from app.infrastructure.database.models import WebinarSettings, User, Channel, WebinarCheckin, SystemSettings
 from app.utils.formatters import format_uzb_time
-from app.presentation.keyboards.admin import admin_kb, admin_back_kb, suspicious_users_kb, checkin_button_kb
+from app.presentation.keyboards.admin import (
+    admin_kb, admin_back_kb, suspicious_users_kb, checkin_button_kb,
+    webinar_admin_kb, users_admin_kb, settings_admin_kb
+)
 from app.presentation.keyboards.admin_channels import channels_list_kb, back_to_channels_kb
 from app.domain.enums import UserStatus
 from app.presentation.states import AdminSG
@@ -87,6 +90,24 @@ async def back_to_main(message: Message, state: FSMContext):
     await state.clear()
     from app.presentation.keyboards.main import main_menu_kb
     await message.answer("Asosiy menyu:", reply_markup=main_menu_kb())
+
+@router.message(F.text == "🌐 Vebinar")
+async def webinar_menu(message: Message):
+    if not is_admin(message.from_user.id):
+        return
+    await message.answer("🌐 <b>Vebinar bo'limi</b>", parse_mode="HTML", reply_markup=webinar_admin_kb())
+
+@router.message(F.text == "📊 Foydalanuvchilar")
+async def users_menu(message: Message):
+    if not is_admin(message.from_user.id):
+        return
+    await message.answer("📊 <b>Foydalanuvchilar bo'limi</b>", parse_mode="HTML", reply_markup=users_admin_kb())
+
+@router.message(F.text == "⚙️ Sozlamalar")
+async def settings_menu(message: Message):
+    if not is_admin(message.from_user.id):
+        return
+    await message.answer("⚙️ <b>Sozlamalar bo'limi</b>", parse_mode="HTML", reply_markup=settings_admin_kb())
 
 @router.message(F.text == "📢 Rassilka")
 async def broadcast_button(message: Message, state: FSMContext):

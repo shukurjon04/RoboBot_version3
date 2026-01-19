@@ -4,35 +4,72 @@ admin_kb = ReplyKeyboardMarkup(
     keyboard=[
         [
             KeyboardButton(text="📢 Rassilka"),
-            KeyboardButton(text="📊 Reyting Excel")
+            KeyboardButton(text="🌐 Vebinar")
         ],
         [
-            KeyboardButton(text="⚠️ Shubhali foydalanuvchilar"),
-            KeyboardButton(text="⏰ Vebinar vaqti")
+            KeyboardButton(text="📊 Foydalanuvchilar"),
+            KeyboardButton(text="⚙️ Sozlamalar")
         ],
         [
-            KeyboardButton(text="📢 Kanallarni boshqarish"),
-            KeyboardButton(text="✅ Check-in")
-        ],
-        [
-            KeyboardButton(text="📥 Vebinar qatnashchilari"),
-            KeyboardButton(text="♻️ Vebinar tiklash")
-        ],
-        [
-            KeyboardButton(text="🗑 Vebinar tozalash"),
             KeyboardButton(text="🏠 Asosiy menyu")
-        ],
-        [
-            KeyboardButton(text="🛑 Ball yig'ishni to'xtatish"),
-            KeyboardButton(text="▶️ Ball yig'ishni tiklash")
-        ],
-        [
-            KeyboardButton(text="💾 Bazani yuklash"),
-            KeyboardButton(text="♻️ Bazani tiklash")
         ]
     ],
     resize_keyboard=True
 )
+
+def webinar_admin_kb() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [
+                KeyboardButton(text="📥 Vebinar qatnashchilari"),
+                KeyboardButton(text="⏰ Vebinar vaqti")
+            ],
+            [
+                KeyboardButton(text="♻️ Vebinar tiklash"),
+                KeyboardButton(text="🗑 Vebinar tozalash")
+            ],
+            [
+                KeyboardButton(text="⬅️ Orqaga")
+            ]
+        ],
+        resize_keyboard=True
+    )
+
+def users_admin_kb() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [
+                KeyboardButton(text="📊 Reyting Excel"),
+                KeyboardButton(text="⚠️ Shubhali foydalanuvchilar")
+            ],
+            [
+                KeyboardButton(text="🛑 Ball yig'ishni to'xtatish"),
+                KeyboardButton(text="▶️ Ball yig'ishni tiklash")
+            ],
+            [
+                KeyboardButton(text="⬅️ Orqaga")
+            ]
+        ],
+        resize_keyboard=True
+    )
+
+def settings_admin_kb() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [
+                KeyboardButton(text="📢 Kanallarni boshqarish"),
+                KeyboardButton(text="✅ Check-in")
+            ],
+            [
+                KeyboardButton(text="💾 Bazani yuklash"),
+                KeyboardButton(text="♻️ Bazani tiklash")
+            ],
+            [
+                KeyboardButton(text="⬅️ Orqaga")
+            ]
+        ],
+        resize_keyboard=True
+    )
 
 def admin_back_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
