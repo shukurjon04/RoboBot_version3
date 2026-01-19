@@ -19,6 +19,6 @@ jobs:
           username: ${{ secrets.USERNAME }}
           password: ${{ secrets.PASSWORD }}
           script: |
-            cd /home/shukurjon/projects/botrobo
+            cd /root/botrobo/RoboBot_version2
             chmod +x deployment/deploy.sh
             ./deployment/deploy.sh

@@ -195,6 +195,6 @@ Kodni har safar `main` branchga push qilganingizda server avtomatik yangilanishi
     -   `USERNAME`: Serverga ulanadigan foydalanuvchi nomi.
     -   `PASSWORD`: Serveringizga SSH orqali ulanish paroli.
 
-3.  Serverda loyiha manzili `/home/shukurjon/projects/botrobo` ekanligiga ishonch hosil qiling.
+3.  Serverda loyiha manzili `/home/shukurjon/projects/botrobo/RoboBot_version2` ekanligiga ishonch hosil qiling.
 
 Endi har safar kodni push qilganingizda, GitHub avtomatik ravishda serverga ulanadi va Docker konteynerlarini yangilaydi.
